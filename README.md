@@ -432,7 +432,8 @@ basestrap /mnt \
     xsel \                     # Alternative clipboard utility
     iwd \                      # Wi-Fi daemon
     dhcpcd \                   # DHCP client (IP configuration)
-    elogind-openrc             # Login/session manager (systemd-logind replacement)
+    elogind-openrc \           # Login/session manager (systemd-logind replacement)
+	zsh
 
 # Generate /etc/fstab for the new system using UUIDs.
 # This records how partitions and volumes should be mounted at boot.
@@ -545,6 +546,42 @@ nvim /etc/conf.d/hostname
 	hostname="<FILLIN>"
 ```
 
+### User
+
+Create a regular user for daily use.
+
+```bash
+# Make Zsh the default shell for root (optional, useful if you prefer Zsh over Bash)
+chsh -s /bin/zsh root
+
+# Ensures all future users created with useradd will automatically use Zsh.
+nvim /etc/default/useradd
+	SHELL=/bin/zsh
+
+# Create a daily-use user with a home directory and a default shell.
+# -m  → create home directory
+# -s  → login shell (use /bin/zsh if you already set it system-wide)
+useradd -m -s /bin/bash user
+
+# Set password for the user
+passwd user
+
+# Groups give access to audio, video, input devices, storage, etc.
+usermod -aG audio,video,input,lp,scanner,optical,storage,users,power user
+
+Disable root login on virtual consoles (TTYs)
+# PAM checks /etc/securetty to allow root login on TTYs.
+# Edit /etc/pam.d/login to ensure pam_securetty is used:
+nvim /etc/pam.d/login
+	# Ensure the line exists:	
+	auth required pam_securetty.so
+# Then edit /etc/securetty:
+nvim /etc/securetty
+	# Comment out all lines (or leave empty) to block root login on all TTYs.
+	# Root can still perform administrative actions via 'sudo' or 'su' from this user.
+	comment everything out
+```
+
 ### Packages
 
 These packages installation form the essential system packages, sets up X11, audio, CLI tools, fonts and configures zsh as default shell.
@@ -628,15 +665,7 @@ pacman -S \
 # Changes the font in virtual console (tty) to Terminus 12x6 (good readability)
 echo 'FONT=ter-132n' > /etc/vconsole.conf
 
-# --- Step 5: Set default shell for root ---
-chsh -s /bin/zsh root
-
-# --- Step 6: Configure default shell for new users ---
-# This ensures all future users get Zsh automatically
-nvim /etc/default/useradd
-	SHELL=/bin/zsh
-
-# --- Step 7: Configure Git ---
+# --- Step 5: Configure Git ---
 git config --global user.name "name"
 git config --global user.email "mail"
 git config --global --list
@@ -653,7 +682,7 @@ ssh -T git@github.com
 git remote -v
 git remote set-url origin git@github.com:username/repo
 
-# --- Step 8: Install Oh My Posh for Zsh prompt ---
+# --- Step 6: Install Oh My Posh for Zsh prompt ---
 # This provides a modern, informative prompt
 curl -s https://ohmyposh.dev/install.sh | bash -s -- -d /etc/zsh
 mkdir -p /etc/zsh/themes
@@ -661,41 +690,51 @@ git clone --depth=1 git@github.com:JanDeDobbeleer/oh-my-posh.git
 cp -r /tmp/oh-my-posh/themes/* /etc/zsh/themes/
 rm -rf /tmp/oh-my-posh
 
-# --- Step 9: Setup base files ---
+# --- Step 7: Setup base files ---
 git clone git@github.com:SMB-M87/Artix.git
+cp zsh_shared /etc/zsh/zsh_shared
+cp zshrc /home/<FILLIN>/.zshrc
+cp zprofile /home/<FILLIN>/.zprofile
+cp xinitrc /home/<FILLIN>/.xinitrc
+chmod +x /home/<FILLIN>/.xinitrc
+cp zshrc /root/.zshrc
 ```
 
 ### GUI
 ```bash
+# Enable system clipboard in Neovim so yanks/pastes work across apps
 nvim /etc/xdg/nvim/sysinit.vim
-	Append>set clipboard=unnamedplus
+	# Append:
+	set clipboard=unnamedplus
 
+# Move to source directory for building software
 cd /usr/local/src
 
-git clone https://github.com/SMB-M87/dwm
+# Clone and install DWM (Dynamic Window Manager)
+# Minimal tiling window manager for X11
+git clone git@github.com:SMB-M87/dwm
 cd ../dwm
 make clean install
 
-git clone https://github.com/SMB-M87/dmenu
+# Clone and install dmenu, a lightweight app launcher for DWM
+git clone git@github.com:SMB-M87/dmenu
 cd ../dmenu
 make clean install
 
+# Clone and install st, a minimal terminal emulator
 git clone https://github.com/SMB-M87/st
 cd /st
 make clean install
 
+# Clone slock, a simple screen locker
 git clone https://github.com/SMB-M87/slock
 cd slock
 
-nvim config.def.h
+# Edit slock configuration to set your user/group
+nvim config.h
 	change user and group
 
-nvim /etc/elogind/login.conf
-	HandlePowerKey=ignore
-	HandleLidSwitch=ignore
-	HandleLidSwitchExternalPower=ignore
-	HandleLidSwitchDocked=ignore
-
+# Configure ACPI scripts for power/lid events
 nvim /etc/acpi/handler.sh
 	button/power)
 		logger..
@@ -707,126 +746,90 @@ nvim /etc/acpi/handler.sh
 			;;
 
 make clean install
-
-cd /home/user
-nvim .bash_profile
-        if [[ -z $DISPLAY ]] && [[ $(tty) == /dev/tty1 ]]; then
-                exec startx
-        fi
-
-cp /etc/X11/xinit/xinitrc /home/user/.xinitrc
-
-nvim .xinitrc
-    Remove the last exec's replace with>
-	
-	xcompmgr &
-	sleep 1 &
-	xwallpaper --zoom /usr/local/share/wallpaper.jpg &
-
-	while true; do
-        DATE=$(date '+%a %b %d %H:%M:%S')
-        BAT=$(cat /sys/class/power_supply/BAT0/capacity)
-        LOAD=$(uptime | sed 's/.*,//')
-        xsetroot -name "$DATE | $BAT | $LOAD"
-        sleep 1
-	done &
-
-	exec dwm
-
-
-chmod +x .xinitrc
-```
-
-### User
-
-Create a regular user for daily use.
-
-```bash
-# Create a regular user
-# -m  → create home directory
-# -s  → login shell (use /bin/zsh if you already set it system-wide)
-useradd -m -s /bin/bash user
-
-# Set password for the user
-passwd user
-
-usermod -aG audio,video,input,lp,scanner,optical,storage,users,power user
-
-nvim /etc/pam.d/login
-        auth required pam_securetty.so
-
-nvim /etc/securetty
-        comment everything out
 ```
 
 ### Services
 ```bash
-rc-update add device-mapper boot
-rc-update add lvm boot
-rc-update add dmcrypt boot
-rc-update add elogind boot
+# Early boot services for encrypted LVM and system initialization
+rc-update add device-mapper boot   # Handles device-mapper devices (required for LVM)
+rc-update add lvm boot             # Activates volume groups and logical volumes at boot
+rc-update add dmcrypt boot         # Unlocks LUKS encrypted partitions
+rc-update add elogind boot         # Starts elogind for session and login management
 
-rc-status sysinit | grep "udev"
-
-rc-update add dbus default
-rc-update add haveged default
-rc-update add cronie default
-rc-update add ntpd default
-rc-update add acpid default
-rc-update add iwd default
-rc-update add dhcpcd default
-rc-update add nvidia default
-
-rc-update add wireplumber default --user
-rc-update add pipewire-pulse default --user
-rc-update add pipewire default --user
-
-rc-service pipewire start --user
-rc-service pipewire-pulse start --user
-rc-service wireplumber start --user
+# Core system services for normal operation
+rc-update add dbus default         # Provides D-Bus IPC system; required by many system services
+rc-update add haveged default      # Optional: provides entropy for cryptography (useful for LUKS, SSH, etc.)
+rc-update add cronie default       # Cron daemon for scheduled tasks
+rc-update add ntpd default         # Synchronizes system time via NTP
+rc-update add acpid default        # Handles ACPI events like power button, lid close, battery status
 ```
 
 ## mkinicpio.conf & GRUB
 
+### BIOS
 ```bash
+# Edit mkinitcpio configuration
 nvim /etc/mkinitcpio.conf
-        HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt lvm2 resume
-filesystem)
-		MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
+	# HOOKS determine what scripts and modules are included in the initramfs.
+	# Typical order: base → udev → autodetect → microcode → modconf → kms → keyboard → keymap → consolefont → block → encrypt → lvm2 → resume → filesystem
+	HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt lvm2 resume filesystem)
+	# MODULES specifies kernel modules to include. Here, including NVIDIA modules for proprietary GPU support.
+	MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
 
-add to /etc/mkinitcpio.d/linux-hardened.preset:
-PRESETS=('default' 'fallback')
+# Edit the preset file to define initramfs presets (used by mkinitcpio -P)
+# 'default' → normal initramfs
+# 'fallback' → generic initramfs with additional modules; useful if new kernel modules break boot
+nvim /etc/mkinitcpio.d/linux-hardened.preset:
+	PRESETS=('default' 'fallback')
 
+# Create pacman hook to automatically rebuild initramfs after kernel upgrades
 mkdir -p /etc/pacman.d/hooks
 nvim /etc/pacman.d/hooks/99-mkinitcpio-force.hook
+	# Run after installing or upgrading these packages
+	[Trigger]
+	Operation = Install
+	Operation = Upgrade
+	Type = Package
+	Target = linux-hardened
+	Target = linux
+	Target = linux-lts
 
-[Trigger]
-Operation = Install
-Operation = Upgrade
-Type = Package
-Target = linux-hardened
-Target = linux
-Target = linux-lts
+	[Action]
+	Description = Rebuilding initramfs (forced)
+	When = PostTransaction
+	Exec = /usr/bin/mkinitcpio -P
 
-[Action]
-Description = Rebuilding initramfs (forced)
-When = PostTransaction
-Exec = /usr/bin/mkinitcpio -P
-
+# Build the initial initramfs for the hardened kernel
 mkinitcpio -p linux-hardened
 
+# Get UUID of swap partition (useful for resume/suspend)
 blkid -s UUID -o value /dev/lvm/swap
 
+# Configure GRUB
 nvim /etc/default/grub
-        GRUB_TIMEOUT=1
-        GRUB_SAVEDEFAULT=true
-        GRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=UUID=xxx:system loglevel=3 quiet net.ifnames=0"
-        GRUB_CMDLINE_LINUX="cryptdevice=UUID=xxx:system root=/dev/mapper/lvm-root net.ifnames=0"
-        [xxx=blkid -s UUID -o value /dev/sdX1]
-        GRUB_ENABLE_CRYPTODISK=y
-		nvidia-drm.modeset=1
+	# Timeout in seconds for GRUB menu
+	GRUB_TIMEOUT=1
+	# Save last selected menu entry
+    GRUB_SAVEDEFAULT=true
+	# Kernel parameters for default boot
+	# cryptdevice=UUID=xxx:system → tells kernel where to find encrypted root
+	# loglevel=3 → suppress most kernel logs
+	# quiet → reduce boot messages
+	# net.ifnames=0 → disable predictable network interface names (ensures eth0/wlan0 style names)
+	GRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=UUID=xxx:system loglevel=3 quiet net.ifnames=0 nvidia-drm.modeset=1"
+	# Kernel parameters without DEFAULT for explicit root specification
+	GRUB_CMDLINE_LINUX="cryptdevice=UUID=xxx:system root=/dev/mapper/lvm-root net.ifnames=0 nvidia-drm.modeset=1"
+	# Enable GRUB to decrypt LUKS at boot (necessary for encrypted /boot/root)
+    GRUB_ENABLE_CRYPTODISK=y
 
-grub-install --target=i386-pc --boot-directory=/boot --bootloader-id=artix --recheck /dev/sda
+# Install GRUB bootloader to MBR of target disk
+# --target=i386-pc → BIOS boot
+# --boot-directory=/boot → where to place GRUB files
+# --bootloader-id=artix → menu name
+# --recheck → force detection of disks
+grub-install --target=i386-pc --boot-directory=/boot --bootloader-id=artix --recheck /dev/<TARGET_DISK>
+
+# Generate GRUB configuration file
 grub-mkconfig -o /boot/grub/grub.cfg
 ```
 
@@ -839,6 +842,27 @@ vgchange -an lvm
 cryptsetup luksClose system
 sync
 reboot
+
+User:
+rc-update add wireplumber default --user
+rc-update add pipewire-pulse default --user
+rc-update add pipewire default --user
+
+rc-service pipewire start --user
+rc-service pipewire-pulse start --user
+rc-service wireplumber start --user
+
+Root:
+# Check that udev (device manager) is running
+rc-status sysinit | grep "udev"
+# Expected Output:
+# udev                       [  started  ]
+
+nvidia-smi //Check if GPU loaded correctly
+
+rc-update add iwd default
+rc-update add dhcpcd default
+rc-update add nvidia default
 ```
 
 ## Rechroot
@@ -850,8 +874,6 @@ mount /dev/lvm/root /mnt
 mount /dev/lvm/boot /mnt/boot
 artix-chroot /mnt /bin/bash
 ```
-
-nvidia-smi //Check if GPU loaded correctly
 
 ## Bluetooth
 ```bash
