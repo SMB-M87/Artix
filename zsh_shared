@@ -1,0 +1,135 @@
+# Oh My Posh
+if command -v oh-my-posh &>/dev/null; then
+	eval "$(oh-my-posh init zsh --config /etc/zsh/themes/easy-term.omp.json)"
+fi
+
+# Environment
+setopt nullglob
+export EDITOR=vim
+export LESS='-R'
+
+# Global Alias
+alias cls='clear'
+alias dfh='df -hT'
+alias duh='du -sh .[!.]* * 2>/dev/null'
+alias update='pacman -Syu'
+alias mirror='reflector --latest 20 --protocol https --sort rate --download-timeout 10 --save /etc/pacman.d/mirrorlist'
+alias now='date +"%Y-%m-%d_%H-%M-%S"'
+alias myip="ip addr show wlan0 | rg 'inet' | awk '{print $2}'"
+alias cat='bat --style=plain --paging=never'
+alias man='BAT_THEME="OneHalf Dark" batman'
+alias grep='grep --color=auto'
+alias shut='poweroff'
+alias sleep='systemctl hibernate'
+
+# List Files
+alias ls='exa --group-directories-first --icons --color=always'
+alias ll='exa -lah --color=always'
+alias la='exa -a --color=always'
+
+# List Directory
+lfcd()
+{
+	local tmp="$(mktemp -t lfcd.XXXXXX)"
+	command lf -last-dir-path="$tmp" "$@"
+
+	if [ -f "$tmp" ]; then
+		local dir="$(bat "$tmp")"
+		rm -f "$tmp"
+		[ -d "$dir" ] && cd "$dir"
+	fi
+}
+alias lf='lfcd'
+
+# Change Directory
+up()
+{
+	local n=${1:-1} p=".."
+	for ((i=1;i<n;i++)); do
+		p="$p/.."; done
+		cd "$p"
+}
+alias ..='up 1'
+alias ...='up 2'
+alias ....='up 3'
+
+# Screen brightness
+screen()
+{
+	local level
+
+	if [[ -n "$1" ]]; then
+		level="$1"
+	else
+		read level
+	fi
+
+  	if ! [[ "$level" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    		return 1
+  	fi
+
+  	if [[ $(echo "$level < 0.1" | bc) -eq 1 ]]; then
+    		level=0.1
+  	fi
+
+  	if [[ $(echo "$level > 1.0" | bc) -eq 1 ]]; then
+    		level=1.0
+ 	fi
+
+  	echo "Setting brightness to $level for all connected monitors..."
+
+  	for output in $(xrandr --listmonitors | awk '{print $4}' | grep -v '^$'); do
+    		echo " → $output"
+    		xrandr --output "$output" --brightness "$level"
+  	done
+}
+
+# Copy Path
+cpwd()
+{
+	if [[ -n "$DISPLAY" ]] && command -v xclip &>/dev/null; then
+		pwd | xclip -selection clipboard
+	else
+		echo "No display or clipboard tool found"
+	fi
+}
+
+# Git
+alias gst='git status'
+alias gco='git checkout'
+alias gcm='git commit -m'
+alias gp='git push'
+alias gl='git pull'
+alias ga='git add .'
+alias glog='git log --oneline --graph --decorate --all'
+
+# Extract Zip
+extract()
+{
+	if [ -f "$1" ]; then
+		case "$1" in
+			*.tar.bz2) 	tar xjf		"$1" ;;
+			*.tar.gz) 	tar xzf		"$1" ;;
+			*.bz2) 		bunzip2		"$1" ;;
+			*.rar) 		unrar x 	"$1" ;;
+			*.gz)  		gunzip 		"$1" ;;
+			*.tar) 		tar xf	 	"$1" ;;
+			*.tbz2)		tar xjf		"$1" ;;
+			*.tgz) 		tar xzf		"$1" ;;
+			*.zip) 		unzip		"$1" ;;
+			*.7z) 		7z x		"$1" ;;
+			*.iso) 		7z x		"$1" ;;
+			*.deb) 		ar x		"$1" ;;
+			*)		echo		"Don't know how to extract '$1'" ;;
+		esac
+	else
+		echo "'$1' is not a valid file"
+	fi
+}
+
+# Change Config
+cc()
+{
+	vim /etc/zsh/zsh_shared
+}
+alias ccs='source /etc/zsh/zsh_shared'
