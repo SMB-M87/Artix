@@ -1,1 +1,891 @@
-# Artix
+# Introduction
+
+This guide documents my Artix Linux setup from bare metal to a fully usable, minimal desktop.  
+The system is built around **full disk encryption (LUKS + LVM)**, **OpenRC**, and a **hardened kernel**, with a lightweight **DWM-based X11** environment.
+
+The goal is not convenience or automation, but **control and reproducibility**. If something breaks, you should understand *why* it broke and how to fix it without reinstalling.
+
+This guide is written primarily for my own reference, but it may also be useful if you:
+
+- want a clean Artix install without systemd  
+- care about disk encryption and predictable boot behavior  
+- prefer minimal window managers over full desktop environments  
+- want a system that does exactly what you tell it to  
+
+Follow it carefully, adapt it to your hardware, and **double-check every destructive command**.
+
+---
+
+# Connectivity
+
+## WiFi
+If your device does not have supported WLAN or LAN drivers available during installation, use a **USB Wi-Fi adapter** or similar temporary network device. Once connected, follow the steps below to bring up networking using `connman`.
+
+### WiFi Adapter (i.e. ath9k_htc)
+```bash
+# Load the Wi-Fi kernel module
+modprobe ath9k_htc
+
+# Verify the module is loaded properly
+lsmod | grep ath9k_htc
+
+# Expected Output
+# ath9k_htc           73728  0
+# ath9k_common        28672  1 ath9k_htc
+# ath9k_hw           466944  2 ath9k_htc,ath9k_common
+# ath                 32768  3 ath9k_htc,ath9k_common,ath9k_hw
+# mac80211          1007616  1 ath9k_htc
+# cfg80211           958464  3 ath9k_htc,mac80211,ath
+# If no output is returned, the module is not loaded
+```
+
+### Enable WiFi in ConnMan
+```bash
+connmanctl enable wifi
+
+# Expected Output
+# wifi enabled
+
+# Connect to ConnMan
+connmanctl
+
+# Scans for nearby wireless networks. This may take a few seconds and produces no output on success.
+connmanctl> scan wifi
+
+# Expected Output
+# Scan completed for wifi
+
+# Lists available networks.
+connmanctl> services
+
+# Enables the authentication agent so ConnMan can prompt for a passphrase.
+connmanctl> agent on
+
+# Expected Output
+# Agent registered
+
+# Connect to a specific service:
+connmanctl> connect wifi_(tab)
+connmanctl> enter further prompted credentials
+
+# Quit connmanct (or use CTRL + C)
+connmanctl> quit 
+```
+
+## Ethernet
+
+If your system has a working Ethernet adapter and a cable is plugged in, **ConnMan usually enables it automatically**. No authentication or manual setup is required in most cases.
+
+### Verify Ethernet Link
+```bash
+ip link
+
+# Look for an interface such as eth0, enp0s3, or similar. A connected interface should show: state UP
+# You can also check whether ConnMan sees the wired connection:
+connmanctl services
+# Expected Output
+# *AO Wired                ethernet_XXXXXXXXXXXX_cable
+# If you see Wired listed and marked as connected (*AO), networking is already active.
+
+# If the cable is plugged in but no connection is established:
+connmanctl enable ethernet
+
+# Then reconnect ConnMan:
+connmanctl
+connmanctl> services
+connmanctl> connect ethernet_XXXXXXXXXXXX_cable
+
+# Successful connection will produce:
+# Connected ethernet_XXXXXXXXXXXX_cable
+
+# If no wired interface or service is shown, the kernel driver may not be loaded.
+# Identify the Ethernet controller:
+lspci | grep -i ethernet
+
+# Example Output
+# Ethernet controller: Intel Corporation Ethernet Connection (I219-V)
+
+# Load common Ethernet drivers manually:
+modprobe e1000e     # Intel
+modprobe r8169      # Realtek
+modprobe tg3        # Broadcom
+
+# Recheck:
+ip link
+connmanctl services
+
+# If ConnMan is unavailable or malfunctioning, you can bring up Ethernet manually using dhcpcd: (Replace eth0 with the correct interface name)
+ip link set eth0 up
+dhcpcd eth0
+```
+
+## Verify Connectivity
+```
+ping -c 3 1.1.1.1
+ping -c 3 github.com
+```
+
+## Time Synchronization
+
+Once network connectivity is confirmed (wired or wireless), start NTP:
+```bash
+rc-service ntpd start
+
+# Expected Output
+# ntpd			| * Starting OpenNTPD ...
+```
+
+This ensures correct system time for package management and cryptographic operations.
+
+---
+
+# Disk Partitioning
+
+In order to manipulate disk partitions, the ISO image (live CD) comes with `cfdisk`.  
+However, `cfdisk` does not align partitions to block device I/O limits, which can reduce performance on modern drives.  
+
+It is recommended to use **parted** (or `fdisk`, `gdisk`, etc.) which supports proper alignment and scripting. Install it if necessary:
+
+```bash
+# Install a specific version from Artix archive
+pacman -U "https://archive.artixlinux.org/packages/p/parted/parted-3.4-2-x86_64.pkg.tar.zst"
+
+# OR install the latest from repo
+pacman -Sy parted
+```
+
+## Erase a Disk
+**Warning**: This will completely destroy all data on the target disk.
+```bash
+# List all disks and partitions to identify your target:
+parted -l
+
+# Print partition table of a specific disk:
+parted -s /dev/sdX print
+
+# Overwrite the disk with random data for security
+# bs=4096 → block size
+# iflag=nocache, oflag=direct → bypass caches for performance/consistency
+# status=progress → show progress
+dd bs=4096 if=/dev/urandom iflag=nocache of=/dev/sdX oflag=direct status=progress || true
+
+# Flush all pending writes:
+sync
+
+# Optional but recommended: reboot after wiping, then re-open a root terminal
+```
+> Interrupting dd will leave partially overwritten data. Only proceed once the process completes.
+
+---
+
+## BIOS Full Disk Encryption
+This part explains a **Full Disk Encryption (FDE)** setup on Artix Linux using **BIOS**, **LUKS1** and **LVM**. [Ref](https://wiki.artixlinux.org/Main/InstallationWithFullDiskEncryption)
+> Note: Modern UEFI systems often require separate /boot outside the encrypted LUKS container or use LUKS2. This part is targeted at BIOS/MBR systems.
+
+### Goal
+Encrypt **everything** on disk, no plaintext filesystem exists on disk. This is only possible on **BIOS** systems because GRUB can unlock **LUKS1** before loading the kernel.
+```
+# Disk Layout
+/dev/sdX (physical disk, MBR / msdos)
+└── /dev/sdX1 (LUKS1 encrypted container)
+	└── LVM Volume Group
+		├── /dev/lvm/boot → /boot (encrypted)
+		├── /dev/lvm/swap → swap (encrypted)
+		└── /dev/lvm/root → / (encrypted)
+```
+Why this works:
+- BIOS GRUB supports unlocking **LUKS1**
+- GRUB can read **ext4 inside LUKS**
+- Kernel and initramfs are protected
+- Passphrase is required before *any* OS code loads
+
+### Partitioning (MBR / BIOS)
+```bash
+# List current disks and partitions:
+parted -l
+
+# Check target disk:
+parted -s /dev/<TARGET_DISK> print
+
+# Create a new MBR partition table:
+parted -s /dev/<TARGET_DISK> mklabel msdos
+
+# Create a single primary partition aligned to optimal block boundaries:
+parted -s -a optimal /dev/<TARGET_DISK> mkpart "primary" "ext4" "0%" "100%"
+# -a optimal ensures the partition starts/ends on the disk's optimal I/O boundaries.
+
+# Mark it as bootable:
+parted -s /dev/<TARGET_DISK> set 1 boot on
+
+# Mark it as LVM to indicate it will be used as a physical volume:
+parted -s /dev/<TARGET_DISK> set 1 lvm on
+
+# Print table:
+parted -s /dev/<TARGET_DISK> print
+
+# Check alignment:
+parted -s /dev/<TARGET_DISK> align-check optimal 1
+```
+
+### Encrypt Partition
+```bash
+# Benchmark cryptsetup performance (optional, useful for tuning):
+cryptsetup benchmark
+
+# Encrypt partition with LUKS1:
+cryptsetup --verbose \
+    --type luks1 \
+    --cipher serpent-xts-plain64 \
+    --key-size 512 \
+    --hash sha512 \
+    --iter-time 10000 \
+    --use-random \
+    --verify-passphrase luksFormat /dev/<TARGET_DISK>
+
+# Open encrypted container and map it as 'system':
+cryptsetup luksOpen /dev/<TARGET_DISK> system
+```
+
+### Setup the Logical Volumes
+```bash
+# Initialize LVM on top of the decrypted device
+# --- Step 1: Physical Volume (PV) ---
+# pvcreate marks a disk or partition as usable by LVM.
+# In this case, the decrypted LUKS container (/dev/mapper/system) becomes a "physical volume".
+# Think of it as "this chunk of disk is now LVM-aware".
+pvcreate /dev/mapper/system
+
+# --- Step 2: Volume Group (VG) ---
+# vgcreate combines one or more PVs into a "storage pool" (volume group) called 'lvm'.
+# Logical volumes (LVs) are created from this pool.
+# You can think of VG as a virtual disk made from one or more PVs.
+vgcreate lvm /dev/mapper/system
+
+# --- Step 3: Logical Volumes (LVs) ---
+# lvcreate carves out actual usable partitions from the VG.
+# --contiguous y ensures the LV uses a single contiguous block (sometimes recommended for boot partitions)
+# Names of LVs appear as /dev/mapper/lvm-boot, /dev/mapper/lvm-swap, etc.
+lvcreate --contiguous y --size 1G lvm --name boot   		 # /boot
+lvcreate --contiguous y --size 16G lvm --name swap  		 # swap
+lvcreate --contiguous y --extents +100%FREE lvm --name root  # /
+# --contiguous y ensures the LV uses a single contiguous block (optional, sometimes recommended for boot partitions)
+# lvm is the volume group name; logical volumes appear as /dev/mapper/lvm-boot, etc.
+```
+
+### Format the Partitions
+```bash
+# /boot (FAT for GRUB compatibility):
+mkfs.fat -n BOOT /dev/lvm/boot
+
+# Swap:
+mkswap -L SWAP /dev/lvm/swap
+
+# Root filesystem:
+mkfs.ext4 -L ROOT /dev/lvm/root
+```
+
+### Mount the Partitions
+```bash
+# Enable swap:
+swapon /dev/mapper/lvm-swap
+
+# Mount root:
+mount /dev/mapper/lvm-root /mnt
+
+# Mount boot inside root:
+mkdir -p /mnt/boot
+mount /dev/mapper/lvm-boot /mnt/boot
+```
+> At this point, the encrypted LVM setup is ready for base system installation.
+
+---
+
+## UEFI 'Full' Disk Encryption
+
+UEFI systems require a slightly different setup than BIOS because **GRUB in UEFI cannot unlock LUKS1 in the same way** and the EFI system partition (ESP) must remain unencrypted.  
+This example uses **LUKS2**, **LVM** and **Btrfs** for flexibility, snapshots and subvolumes.
+
+> Note: The EFI System Partition (ESP) must be **FAT32 and unencrypted**, mounted at `/boot/efi`.  
+> The rest of the disk can be encrypted with LUKS2 and used with LVM + Btrfs.
+
+### Goal
+- Encrypt all partitions except the **ESP**  
+- Use **Btrfs** for `/` and optional `/home` to enable snapshots  
+- Keep UEFI boot files on the unencrypted ESP  
+- Unlock LUKS at boot using GRUB2’s built-in cryptography support  
+```
+# Disk Layout
+/dev/nvme0n1 (physical disk, GPT)
+├── /dev/nvme0n1p1 → EFI System Partition (ESP, FAT32, 512MB, unencrypted)
+	/dev/nvme0n1p2 → LUKS2 encrypted container
+	└── LVM Volume Group 'lvm'
+	├── /dev/mapper/lvm-root → Btrfs root filesystem
+	└── /dev/mapper/lvm-swap → swap
+```
+
+### Partitioning (UEFI / GPT)
+```bash
+# Print current disks:
+parted -l
+
+# Select target disk:
+parted -s /dev/<TARGET_DISK> print
+
+# Create GPT partition table:
+parted -s /dev/<TARGET_DISK> mklabel gpt
+
+# Create EFI System Partition (ESP):
+parted -s -a optimal /dev/<TARGET_DISK> mkpart "EFI" fat32 1MiB 513MiB
+parted -s /dev/<TARGET_DISK> set 1 esp on
+
+# Create encrypted partition for LVM:
+parted -s -a optimal /dev/<TARGET_DISK> mkpart "LUKS2" 513MiB 100%
+```
+
+### Encrypt Partition
+```bash
+# Benchmark cryptsetup:
+cryptsetup benchmark
+
+# Encrypt the partition with LUKS2:
+cryptsetup luksFormat --type luks2 \
+    --cipher aes-xts-plain64 --key-size 512 \
+    --hash sha512 --iter-time 10000 \
+    --use-random /dev/<TARGET_DISK>p2
+
+# Open encrypted container:
+cryptsetup luksOpen /dev/<TARGET_DISK>p2 system
+```
+> LUKS2 supports more modern algorithms, flexible metadata, and better integration with systemd/GRUB for UEFI.
+
+### Setup the Logical Volumes
+```bash
+# Step 1: Physical Volume
+pvcreate /dev/mapper/system
+
+# Step 2: Volume Group
+vgcreate lvm /dev/mapper/system
+
+# Step 3: Logical Volumes
+lvcreate -L 16G lvm --name swap    # swap
+lvcreate -l 100%FREE lvm --name root   # root (Btrfs)
+```
+
+### Format the Partitions
+```bash
+# ESP (unlocked, FAT32)
+mkfs.fat -F32 -n EFI /dev/<TARGET_DISK>p1
+
+# Swap
+mkswap -L SWAP /dev/mapper/lvm-swap
+
+# Root filesystem with Btrfs
+mkfs.btrfs -L ROOT /dev/mapper/lvm-root
+```
+
+### Mount the Partitions
+```bash
+# Enable swap:
+swapon /dev/mapper/lvm-swap
+
+# Mount root:
+mount /dev/mapper/lvm-root /mnt
+
+# Optional: create Btrfs subvolumes
+btrfs subvolume create /mnt/@          # main root
+btrfs subvolume create /mnt/@home      # optional home subvolume
+umount /mnt
+
+# Mount Btrfs subvolumes:
+mount -o compress=zstd,subvol=@ /dev/mapper/lvm-root /mnt
+mkdir -p /mnt/home
+mount -o compress=zstd,subvol=@home /dev/mapper/lvm-root /mnt/home
+
+# Mount EFI System Partition:
+mkdir -p /mnt/boot/efi
+mount /dev/<TARGET_DISK>p1 /mnt/boot/efi
+```
+
+---
+
+# Install Base System
+Use basestrap to install the base and optionally the base-devel package groups and your preferred init. [Ref](https://wiki.artixlinux.org/Main/Installation)
+
+```bash
+# basestrap installs the base Artix system into /mnt.
+# Think of /mnt as "the future / (root) of your installed system".
+#
+# This step copies packages, initializes pacman keys,
+# and sets up a minimal but bootable Artix environment.
+basestrap /mnt \
+    base \                     # Minimal filesystem, shell, core utilities
+    base-devel \               # Toolchain (gcc, make, etc.) – needed for building software
+    openrc \                   # Init system (Artix default in this setup)
+    linux-hardened \           # Hardened Linux kernel (security-focused)
+    linux-hardened-headers \   # Headers required for DKMS modules (e.g. NVIDIA)
+    linux-firmware \           # Firmware for Wi-Fi, GPU, storage, etc.
+    lvm2-openrc \              # LVM userspace tools + OpenRC service scripts
+    cryptsetup-openrc \        # LUKS encryption tools + OpenRC service scripts
+    mkinitcpio \               # Builds the initramfs (needed for LUKS + LVM boot)
+    neovim \                   # Text editor (used later for config files)
+    xclip \                    # Clipboard utility (X11)
+    xsel \                     # Alternative clipboard utility
+    iwd \                      # Wi-Fi daemon
+    dhcpcd \                   # DHCP client (IP configuration)
+    elogind-openrc             # Login/session manager (systemd-logind replacement)
+
+# Generate /etc/fstab for the new system using UUIDs.
+# This records how partitions and volumes should be mounted at boot.
+fstabgen -U /mnt >> /mnt/etc/fstab
+
+# If using Btrfs:
+# - Open /mnt/etc/fstab
+# - Add ",compress=zstd" to Btrfs mount options
+#   for better performance and reduced disk usage.
+#
+# Example:
+# UUID=xxxx  /  btrfs  rw,relatime,compress=zstd,subvol=@  0  0
+#UUID=</dev/mapper/lvm-root> / btrfs compress=zstd,subvol=@ 0 0
+#UUID=</dev/mapper/lvm-root> /home btrfs compress=zstd,subvol=@home 0 0
+#UUID=</dev/nvme0n1p1> /boot/efi vfat umask=0077 0 1
+```
+
+## Chroot
+```bash
+# artix-chroot changes root into the newly installed system at /mnt.
+# From this point on, every command affects the installed system, NOT the live ISO environment.
+artix-chroot /mnt /bin/bash
+
+# Set the root password for the installed system.
+# This is required to log in after first boot.
+passwd
+
+# Sync package databases inside the chroot.
+# This ensures pacman knows about current repositories.
+pacman -Sy
+
+# Initialize the pacman keyring.
+# Required so packages can be verified and installed securely.
+pacman-key --init
+
+# Populate Artix Linux signing keys.
+# Without this, pacman will fail with signature errors.
+pacman-key --populate artix
+
+# Temporary DNS configuration.
+# This ensures name resolution works inside the chroot,
+# especially if networking services are not yet running.
+#
+# This file may be overwritten later by network managers.
+echo "nameserver 1.1.1.1" > /etc/resolv.conf
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+```
+
+## Base Configurations
+
+This section configures system language, regional formats, time zone and host identity.
+These settings affect *all* users and programs.
+
+### Locale
+
+We use:
+- **en_US.UTF-8** for system language (English messages)
+- **en_NL.UTF-8** for regional formats (dates, numbers, currency, measurements)
+
+This avoids mixing incompatible conventions while keeping the system fully English.
+
+```bash
+# Enable US English (language)
+echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+
+# Enable Dutch English (regional formats)
+echo "en_NL.UTF-8 UTF-8" >> /etc/locale.gen
+
+# Generate enabled locales
+locale-gen
+
+# Base system language
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+
+# Use Netherlands formats while keeping English language
+echo "LC_TIME=en_NL.UTF-8" >> /etc/locale.conf
+echo "LC_NUMERIC=en_NL.UTF-8" >> /etc/locale.conf
+echo "LC_MONETARY=en_NL.UTF-8" >> /etc/locale.conf
+echo "LC_MEASUREMENT=en_NL.UTF-8" >> /etc/locale.conf
+echo "LC_PAPER=en_NL.UTF-8" >> /etc/locale.conf
+echo "LC_ADDRESS=en_NL.UTF-8" >> /etc/locale.conf
+echo "LC_TELEPHONE=en_NL.UTF-8" >> /etc/locale.conf
+
+# Verify Locale
+locale
+# Expected Output
+# LANG=en_US.UTF-8
+# LC_TIME=en_NL.UTF-8
+# LC_NUMERIC=en_NL.UTF-8
+# ...
+```
+
+### Timezone
+
+This ensures correct timestamps and log times.
+
+```bash
+# Set local timezone
+ln -sf /usr/share/zoneinfo/Europe/Amsterdam /etc/localtime
+
+# Sync hardware clock
+hwclock --systohc
+```
+
+### Hostname
+Choose a short, lowercase name (e.g. system, atlas, ect). The hostname identifies the system on the network and in logs.
+
+```bash
+nvim /etc/conf.d/hostname
+	hostname="<FILLIN>"
+```
+
+### Packages
+
+These packages installation form the essential system packages, sets up X11, audio, CLI tools, fonts and configures zsh as default shell.
+
+```bash
+# --- Step 1: Upgrade critical system packages first ---
+# To avoid cryptsetup and SSL issues during installation, upgrade pacman and OpenSSL.
+pacman -S \
+	openssl \
+	openssl-1.1 \
+	pacman
+
+# --- Step 2: Check GPU ---
+# Useful to know which graphics driver you need.
+lspci | grep -E "VGA|3D"
+
+# --- Step 3: Install core system and userland packages ---
+pacman -S \
+    # --- Core libraries & device support ---
+    glibc                  			# C library
+    device-mapper-openrc   			# LVM / device mapper support
+    haveged haveged-openrc         	# Entropy daemon (for key generation, crypto)
+    cronie cronie-openrc          	# Cron jobs
+    openntpd openntpd-openrc        # NTP time synchronization
+    acpid acpid-openrc           	# ACPI events (power buttons, lid, etc.)
+
+    # --- Bootloader & EFI tools ---
+    efibootmgr             			# EFI boot manager (needed for UEFI GRUB)
+    grub                   			# Bootloader
+
+    # --- X11 and graphics ---
+    libx11 libxft libxinerama libxrandr libxrender libxext \
+    xorg-server xorg-apps xorg-xinit xorg-xrandr xorg-xinput \
+    xorg-fonts xorg-font-util xorg-mkfontscale xorg-mkfontdir \
+    xorg-fonts-misc        			# X11 dependencies
+    xcompmgr               			# Simple compositor for X11
+    xwallpaper             			# Set wallpaper in X
+    brightnessctl          			# Screen brightness control
+    mesa                   			# OpenGL implementation
+    xf86-video-intel       			# Intel GPU driver (adjust for AMD/Nvidia)
+    nvidia-dkms nvidia-utils 		# NVIDIA GPU drivers (skip if not using Nvidia)
+
+    # --- Networking ---
+    inetutils              			# Basic network utilities (ping, ftp, etc.)
+    openssh                			# SSH client/server
+
+    # --- Audio & Media ---
+    playerctl alsa-utils wireplumber pipewire-pulse pulsemixer \
+    wireplumber-openrc pipewire-pulse-openrc \
+                           			# Audio system: PipeWire + PulseAudio compatibility
+    bluez bluez-utils      			# Bluetooth
+    yt-dlp                 			# Video downloader
+    mpd mpc mpv            			# Music player daemon + clients
+
+    # --- Filesystem utilities ---
+	ntfs-3g
+	exfat-utils
+	dosfstools
+	unzip
+
+    # --- Shell utilities ---
+    lf                     			# Terminal file manager
+    eza                    			# Modern ls replacement
+    tldr                   			# Simplified command summaries
+    curl                   			# Downloads, scripts
+    fastfetch              			# System info in terminal
+    man man-db man-pages   			# Manual pages
+    bash-completion        			# Command completion for bash
+    zsh zsh-completions    			# Zsh shell and completions
+    bat ripgrep fd fzf     			# Modern CLI tools (cat with syntax, search, find, fuzzy finder)
+    lazygit github-cli git     		# Git helper tools
+
+    # --- Fonts ---
+    noto-fonts                  	# Google Noto fonts (multilingual support)
+    noto-fonts-emoji           	 	# Emoji support
+    ttf-font-awesome            	# Icon font
+    ttf-dejavu                  	# Classic sans-serif font
+    terminus-font              		# Console font
+
+# --- Step 4: Console font configuration ---
+# Changes the font in virtual console (tty) to Terminus 12x6 (good readability)
+echo 'FONT=ter-132n' > /etc/vconsole.conf
+
+# --- Step 5: Set default shell for root ---
+chsh -s /bin/zsh root
+
+# --- Step 6: Configure default shell for new users ---
+# This ensures all future users get Zsh automatically
+nvim /etc/default/useradd
+	SHELL=/bin/zsh
+
+# --- Step 7: Install Oh My Posh for Zsh prompt ---
+# This provides a modern, informative prompt
+curl -s https://ohmyposh.dev/install.sh | bash -s -- -d /etc/zsh
+```
+
+### User
+
+Create a regular user for daily use.
+
+```bash
+# Create a regular user
+# -m  → create home directory
+# -s  → login shell (use /bin/zsh if you already set it system-wide)
+useradd -m -s /bin/bash user
+
+# Set password for the user
+passwd user
+
+usermod -aG audio,video,input,lp,scanner,optical,storage,users,power user
+
+nvim /etc/pam.d/login
+        auth required pam_securetty.so
+
+nvim /etc/securetty
+        comment everything out
+
+sensors-detect
+sensors
+```
+
+### Services
+```bash
+rc-update add device-mapper boot
+rc-update add lvm boot
+rc-update add dmcrypt boot
+rc-update add elogind boot
+
+rc-status sysinit | grep "udev"
+
+rc-update add dbus default
+rc-update add haveged default
+rc-update add cronie default
+rc-update add ntpd default
+rc-update add acpid default
+rc-update add iwd default
+rc-update add dhcpcd default
+rc-update add nvidia default
+
+rc-update add wireplumber default --user
+rc-update add pipewire-pulse default --user
+rc-update add pipewire default --user
+
+rc-service pipewire start --user
+rc-service pipewire-pulse start --user
+rc-service wireplumber start --user
+```
+
+### GUI
+```bash
+nvim /etc/xdg/nvim/sysinit.vim
+	Append>set clipboard=unnamedplus
+
+cd /usr/local/src
+
+git clone https://github.com/SMB-M87/dwm
+cd ../dwm
+make clean install
+
+git clone https://github.com/SMB-M87/dmenu
+cd ../dmenu
+make clean install
+
+git clone https://github.com/SMB-M87/st
+cd /st
+make clean install
+
+git clone https://github.com/SMB-M87/slock
+cd slock
+
+nvim config.def.h
+	change user and group
+
+nvim /etc/elogind/login.conf
+	HandlePowerKey=ignore
+	HandleLidSwitch=ignore
+	HandleLidSwitchExternalPower=ignore
+	HandleLidSwitchDocked=ignore
+
+nvim /etc/acpi/handler.sh
+	button/power)
+		logger..
+		/sbin/shutdown -h --now
+	button/lid)
+		close)
+			logger 'LID closed, locking screen'
+			/usr/local/src/slock/lid-lock.sh
+			;;
+
+make clean install
+
+cd /home/user
+nvim .bash_profile
+        if [[ -z $DISPLAY ]] && [[ $(tty) == /dev/tty1 ]]; then
+                exec startx
+        fi
+
+cp /etc/X11/xinit/xinitrc /home/user/.xinitrc
+
+nvim .xinitrc
+    Remove the last exec's replace with>
+	
+	xcompmgr &
+	sleep 1 &
+	xwallpaper --zoom /usr/local/share/wallpaper.jpg &
+
+	while true; do
+        DATE=$(date '+%a %b %d %H:%M:%S')
+        BAT=$(cat /sys/class/power_supply/BAT0/capacity)
+        LOAD=$(uptime | sed 's/.*,//')
+        xsetroot -name "$DATE | $BAT | $LOAD"
+        sleep 1
+	done &
+
+	exec dwm
+
+
+chmod +x .xinitrc
+```
+
+## mkinicpio.conf & GRUB
+
+```bash
+nvim /etc/mkinitcpio.conf
+        HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt lvm2 resume
+filesystem)
+		MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
+
+add to /etc/mkinitcpio.d/linux-hardened.preset:
+PRESETS=('default' 'fallback')
+
+mkdir -p /etc/pacman.d/hooks
+nvim /etc/pacman.d/hooks/99-mkinitcpio-force.hook
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = linux-hardened
+Target = linux
+Target = linux-lts
+
+[Action]
+Description = Rebuilding initramfs (forced)
+When = PostTransaction
+Exec = /usr/bin/mkinitcpio -P
+
+mkinitcpio -p linux-hardened
+
+blkid -s UUID -o value /dev/lvm/swap
+
+nvim /etc/default/grub
+        GRUB_TIMEOUT=1
+        GRUB_SAVEDEFAULT=true
+        GRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=UUID=xxx:system loglevel=3 quiet net.ifnames=0"
+        GRUB_CMDLINE_LINUX="cryptdevice=UUID=xxx:system root=/dev/mapper/lvm-root net.ifnames=0"
+        [xxx=blkid -s UUID -o value /dev/sdX1]
+        GRUB_ENABLE_CRYPTODISK=y
+		nvidia-drm.modeset=1
+
+grub-install --target=i386-pc --boot-directory=/boot --bootloader-id=artix --recheck /dev/sda
+grub-mkconfig -o /boot/grub/grub.cfg
+```
+
+## Reboot
+```bash
+exit
+umount -R /mnt
+swapoff -a
+vgchange -an lvm
+cryptsetup luksClose system
+sync
+reboot
+```
+
+## Rechroot
+```bash
+cryptsetup luksOpen /dev/sda1 system
+vgchange -ay
+swapon /dev/lvm/swap
+mount /dev/lvm/root /mnt
+mount /dev/lvm/boot /mnt/boot
+artix-chroot /mnt /bin/bash
+```
+
+nvidia-smi //Check if GPU loaded correctly
+
+## Git
+```bash
+git config --global user.name "name"
+git config --global user.email "mail"
+git config --global --list
+
+gh auth login
+ssh -T git@github.com
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+
+git remote -v
+git remote set-url origin git@github.com:username/repo
+```
+
+## Bluetooth
+```bash
+rfkill list
+rfkill unblock bluetooth
+
+nvim /etc/init.d/bluetooth
+#!/sbin/openrc-run
+description="Bluetooth daemon"
+
+depend() {
+    need dbus
+}
+
+command="/usr/lib/bluetooth/bluetoothd"
+command_args="-n"
+command_background="yes"
+pidfile="/run/bluetoothd.pid"
+
+start_pre() {
+    checkpath --directory --mode 0755 /run
+
+    if rfkill list bluetooth >/dev/null 2>&1; then
+        rfkill unblock bluetooth
+    fi
+}
+
+chmod +x /etc/init.d/bluetooth
+sudo rc-update add bluetooth default
+sudo rc-service bluetooth start
+
+bluetoothctl
+	power on
+	agent on
+	default-agent
+	scan on
+	pair XX:XX:XX:XX:XX:XX
+	trust XX..
+	connect XX..
+	scan off
+```
+
+---
