@@ -636,61 +636,33 @@ chsh -s /bin/zsh root
 nvim /etc/default/useradd
 	SHELL=/bin/zsh
 
-# --- Step 7: Install Oh My Posh for Zsh prompt ---
+# --- Step 7: Configure Git ---
+git config --global user.name "name"
+git config --global user.email "mail"
+git config --global --list
+
+ssh-keygen -t ed25519 -C "mail@provider"
+# Go to GitHub in your browser → Settings → SSH and GPG keys → New SSH key.
+# Paste the contents of id_ed25519.pub into GitHub and give it a name.
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+
+gh auth login
+ssh -T git@github.com
+
+git remote -v
+git remote set-url origin git@github.com:username/repo
+
+# --- Step 8: Install Oh My Posh for Zsh prompt ---
 # This provides a modern, informative prompt
 curl -s https://ohmyposh.dev/install.sh | bash -s -- -d /etc/zsh
-```
+mkdir -p /etc/zsh/themes
+git clone --depth=1 git@github.com:JanDeDobbeleer/oh-my-posh.git
+cp -r /tmp/oh-my-posh/themes/* /etc/zsh/themes/
+rm -rf /tmp/oh-my-posh
 
-### User
-
-Create a regular user for daily use.
-
-```bash
-# Create a regular user
-# -m  → create home directory
-# -s  → login shell (use /bin/zsh if you already set it system-wide)
-useradd -m -s /bin/bash user
-
-# Set password for the user
-passwd user
-
-usermod -aG audio,video,input,lp,scanner,optical,storage,users,power user
-
-nvim /etc/pam.d/login
-        auth required pam_securetty.so
-
-nvim /etc/securetty
-        comment everything out
-
-sensors-detect
-sensors
-```
-
-### Services
-```bash
-rc-update add device-mapper boot
-rc-update add lvm boot
-rc-update add dmcrypt boot
-rc-update add elogind boot
-
-rc-status sysinit | grep "udev"
-
-rc-update add dbus default
-rc-update add haveged default
-rc-update add cronie default
-rc-update add ntpd default
-rc-update add acpid default
-rc-update add iwd default
-rc-update add dhcpcd default
-rc-update add nvidia default
-
-rc-update add wireplumber default --user
-rc-update add pipewire-pulse default --user
-rc-update add pipewire default --user
-
-rc-service pipewire start --user
-rc-service pipewire-pulse start --user
-rc-service wireplumber start --user
+# --- Step 9: Setup base files ---
+git clone git@github.com:SMB-M87/Artix.git
 ```
 
 ### GUI
@@ -765,6 +737,55 @@ nvim .xinitrc
 chmod +x .xinitrc
 ```
 
+### User
+
+Create a regular user for daily use.
+
+```bash
+# Create a regular user
+# -m  → create home directory
+# -s  → login shell (use /bin/zsh if you already set it system-wide)
+useradd -m -s /bin/bash user
+
+# Set password for the user
+passwd user
+
+usermod -aG audio,video,input,lp,scanner,optical,storage,users,power user
+
+nvim /etc/pam.d/login
+        auth required pam_securetty.so
+
+nvim /etc/securetty
+        comment everything out
+```
+
+### Services
+```bash
+rc-update add device-mapper boot
+rc-update add lvm boot
+rc-update add dmcrypt boot
+rc-update add elogind boot
+
+rc-status sysinit | grep "udev"
+
+rc-update add dbus default
+rc-update add haveged default
+rc-update add cronie default
+rc-update add ntpd default
+rc-update add acpid default
+rc-update add iwd default
+rc-update add dhcpcd default
+rc-update add nvidia default
+
+rc-update add wireplumber default --user
+rc-update add pipewire-pulse default --user
+rc-update add pipewire default --user
+
+rc-service pipewire start --user
+rc-service pipewire-pulse start --user
+rc-service wireplumber start --user
+```
+
 ## mkinicpio.conf & GRUB
 
 ```bash
@@ -831,21 +852,6 @@ artix-chroot /mnt /bin/bash
 ```
 
 nvidia-smi //Check if GPU loaded correctly
-
-## Git
-```bash
-git config --global user.name "name"
-git config --global user.email "mail"
-git config --global --list
-
-gh auth login
-ssh -T git@github.com
-eval "$(ssh-agent -s)"
-ssh-add ~/.ssh/id_ed25519
-
-git remote -v
-git remote set-url origin git@github.com:username/repo
-```
 
 ## Bluetooth
 ```bash
