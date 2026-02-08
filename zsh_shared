@@ -130,6 +130,6 @@ extract()
 # Change Config
 cc()
 {
-	vim /etc/zsh/zsh_shared
+	nvim /etc/zsh/zsh_shared
 }
 alias ccs='source /etc/zsh/zsh_shared'
