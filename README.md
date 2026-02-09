@@ -621,7 +621,6 @@ pacman -S \
     xwallpaper             			# Set wallpaper in X
     brightnessctl          			# Screen brightness control
     mesa                   			# OpenGL implementation
-    xf86-video-intel       			# Intel GPU driver (adjust for AMD/Nvidia)
     nvidia-dkms nvidia-utils 		# NVIDIA GPU drivers (skip if not using Nvidia)
 
     # --- Networking ---
@@ -654,6 +653,7 @@ pacman -S \
     zsh zsh-completions    			# Zsh shell and completions
     bat ripgrep fd fzf     			# Modern CLI tools (cat with syntax, search, find, fuzzy finder)
     lazygit github-cli git     		# Git helper tools
+	htop
 
     # --- Fonts ---
     noto-fonts                  	# Google Noto fonts (multilingual support)
@@ -827,6 +827,7 @@ nvim /etc/default/grub
 	# Timeout in seconds for GRUB menu
 	GRUB_TIMEOUT=1
 	# Save last selected menu entry
+	GRUB_DEFAULT=saved
     GRUB_SAVEDEFAULT=true
 	# Kernel parameters for default boot
 	# cryptdevice=UUID=xxx:system → tells kernel where to find encrypted root
