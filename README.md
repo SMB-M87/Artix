@@ -424,14 +424,16 @@ basestrap /mnt \
     linux-hardened \           # Hardened Linux kernel (security-focused)
     linux-hardened-headers \   # Headers required for DKMS modules (e.g. NVIDIA)
     linux-firmware \           # Firmware for Wi-Fi, GPU, storage, etc.
+	linux-lts \ 			   # Backup kernel if linux-hardened got corrupted.
+	linux-lts-headers \ 	   # Backup kernel
     lvm2-openrc \              # LVM userspace tools + OpenRC service scripts
     cryptsetup-openrc \        # LUKS encryption tools + OpenRC service scripts
     mkinitcpio \               # Builds the initramfs (needed for LUKS + LVM boot)
     neovim \                   # Text editor (used later for config files)
     xclip \                    # Clipboard utility (X11)
     xsel \                     # Alternative clipboard utility
-    iwd \                      # Wi-Fi daemon
-    dhcpcd \                   # DHCP client (IP configuration)
+    iwd iwd-openrc \           # Wi-Fi daemon
+    dhcpcd dhcpcd-openrc \     # DHCP client (IP configuration)
     elogind-openrc \           # Login/session manager (systemd-logind replacement)
 	zsh
 
@@ -498,9 +500,7 @@ This avoids mixing incompatible conventions while keeping the system fully Engli
 ```bash
 # Enable US English (language)
 echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
-
-# Enable Dutch English (regional formats)
-echo "en_NL.UTF-8 UTF-8" >> /etc/locale.gen
+echo "nl_NL.UTF-8 UTF-8" >> /etc/locale.gen
 
 # Generate enabled locales
 locale-gen
@@ -627,6 +627,7 @@ pacman -S \
     # --- Networking ---
     inetutils              			# Basic network utilities (ping, ftp, etc.)
     openssh                			# SSH client/server
+	firefox
 
     # --- Audio & Media ---
     playerctl alsa-utils wireplumber pipewire-pulse pulsemixer \
@@ -762,9 +763,16 @@ rc-update add haveged default      # Optional: provides entropy for cryptography
 rc-update add cronie default       # Cron daemon for scheduled tasks
 rc-update add ntpd default         # Synchronizes system time via NTP
 rc-update add acpid default        # Handles ACPI events like power button, lid close, battery status
+
+rc-update add iwd default
+rc-update add dhcpcd default
 ```
 
 ## mkinicpio.conf & GRUB
+Overview: BIOS vs UEFI
+- **BIOS**: GRUB can unlock LUKS1 directly. `/boot` can be encrypted.  
+- **UEFI**: GRUB cannot unlock LUKS1 reliably, and the EFI System Partition (ESP) **must remain unencrypted**. Use LUKS2 with modern encryption and keep `/boot/efi` separate.  
+- Initramfs (`mkinitcpio`) and GRUB configuration differ slightly between the two.
 
 ### BIOS
 ```bash
@@ -776,11 +784,19 @@ nvim /etc/mkinitcpio.conf
 	# MODULES specifies kernel modules to include. Here, including NVIDIA modules for proprietary GPU support.
 	MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
 
+cp /etc/mkinitcpio.conf /etc/mkinitcpio-lts.conf
+	Remove nvidia Modules
+
 # Edit the preset file to define initramfs presets (used by mkinitcpio -P)
 # 'default' → normal initramfs
 # 'fallback' → generic initramfs with additional modules; useful if new kernel modules break boot
 nvim /etc/mkinitcpio.d/linux-hardened.preset:
 	PRESETS=('default' 'fallback')
+	# Uncomment Default config fallback config and fallback image
+
+nvim /etc/mkinitcpio.d/linux-lts.preset:
+	PRESETS=('default' 'fallback')
+	# Uncomment Default config fallback config and fallback image => use mkinitcpio-lts
 
 # Create pacman hook to automatically rebuild initramfs after kernel upgrades
 mkdir -p /etc/pacman.d/hooks
@@ -801,6 +817,7 @@ nvim /etc/pacman.d/hooks/99-mkinitcpio-force.hook
 
 # Build the initial initramfs for the hardened kernel
 mkinitcpio -p linux-hardened
+mkinitcpio -p linux-lts
 
 # Get UUID of swap partition (useful for resume/suspend)
 blkid -s UUID -o value /dev/lvm/swap
@@ -833,6 +850,50 @@ grub-install --target=i386-pc --boot-directory=/boot --bootloader-id=artix --rec
 grub-mkconfig -o /boot/grub/grub.cfg
 ```
 
+---
+
+### UEFI
+```bash
+# Edit mkinitcpio configuration (similar to BIOS)
+nvim /etc/mkinitcpio.conf
+	HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt lvm2 resume filesystems)
+	MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
+
+cp /etc/mkinitcpio.conf /etc/mkinitcpio-lts.conf
+	Remove nvidia Modules
+
+nvim /etc/mkinitcpio.d/linux-hardened.preset:
+	PRESETS=('default' 'fallback')
+	# Uncomment Default config fallback config and fallback image
+
+nvim /etc/mkinitcpio.d/linux-lts.preset:
+	PRESETS=('default' 'fallback')
+	# Uncomment Default config fallback config and fallback image => use mkinitcpio-lts
+
+# Rebuild initramfs
+mkinitcpio -p linux-hardened
+mkinitcpio -p linux-lts
+
+# Configure GRUB for UEFI
+nvim /etc/default/grub
+	GRUB_TIMEOUT=1
+	GRUB_SAVEDEFAULT=true
+	GRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=UUID=xxx:system root=/dev/mapper/lvm-root loglevel=3 quiet nvidia-drm.modeset=1"
+	GRUB_CMDLINE_LINUX="cryptdevice=UUID=xxx:system root=/dev/mapper/lvm-root loglevel=3 quiet net.ifnames=0"
+	GRUB_ENABLE_CRYPTODISK=y
+
+# Verify UEFI is visible:
+ls /sys/firmware/efi/efivars
+
+# Install GRUB to EFI System Partition (ESP)
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=artix --recheck
+
+# Generate GRUB config
+grub-mkconfig -o /boot/grub/grub.cfg
+```
+
+---
+
 ## Reboot
 ```bash
 exit
@@ -859,19 +920,33 @@ rc-status sysinit | grep "udev"
 # udev                       [  started  ]
 
 nvidia-smi //Check if GPU loaded correctly
-
-rc-update add iwd default
-rc-update add dhcpcd default
-rc-update add nvidia default
+lsmod | grep nvidia
+dmesg | grep -i nvidia
+grep -i nvidia /var/log/Xorg.0.log
 ```
 
 ## Rechroot
 ```bash
-cryptsetup luksOpen /dev/sda1 system
+# BIOS
+cryptsetup luksOpen /dev/<TARGET_DISK> system
 vgchange -ay
 swapon /dev/lvm/swap
 mount /dev/lvm/root /mnt
 mount /dev/lvm/boot /mnt/boot
+artix-chroot /mnt /bin/bash
+
+# UEFI
+cryptsetup luksOpen /dev/<TARGET_DISK>p2 system
+vgchange -ay
+mount -o compress=zstd,subvol=@ /dev/mapper/lvm-root /mnt
+mkdir -p /mnt/home
+mount -o compress=zstd,subvol=@home /dev/mapper/lvm-root /mnt/home
+mkdir -p /mnt/boot/efi
+mount /dev/<TARGET_DISK>p1 /mnt/boot/efi
+mount -t proc /proc /mnt/proc
+mount --rbind /sys /mnt/sys
+mount --rbind /dev /mnt/dev
+mount --rbind /run /mnt/run
 artix-chroot /mnt /bin/bash
 ```
 
