@@ -924,6 +924,35 @@ nvidia-smi //Check if GPU loaded correctly
 lsmod | grep nvidia
 dmesg | grep -i nvidia
 grep -i nvidia /var/log/Xorg.0.log
+
+ip link
+rfkill list
+unblock wifi
+
+nvim /etc/init.d/unblockwifi
+#!/sbin/openrc-run
+command="/usr/sbin/rfkill"
+command_args="unblock wifi"
+depend() {
+        after bootmisc
+}
+
+chmod +x /etc/init.d/unblockwifi
+rc-update add unblockwifi boot
+
+iwctl
+device list
+station <device> scan
+station <device> get-networks
+station <device> connect(-hidden) NETWORK_NAME
+exit
+
+ip addr show <device>
+
+mandb
+
+pacman -S mlocate autorandr
+updatedb
 ```
 
 ## Rechroot
