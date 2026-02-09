@@ -632,7 +632,7 @@ pacman -S \
     playerctl alsa-utils wireplumber pipewire-pulse pulsemixer \
     wireplumber-openrc pipewire-pulse-openrc \
                            			# Audio system: PipeWire + PulseAudio compatibility
-    bluez bluez-utils      			# Bluetooth
+    bluez bluez-utils bluez-openrc  # Bluetooth
     yt-dlp                 			# Video downloader
     mpd mpc mpv            			# Music player daemon + clients
 
@@ -766,6 +766,7 @@ rc-update add acpid default        # Handles ACPI events like power button, lid 
 
 rc-update add iwd default
 rc-update add dhcpcd default
+rc-update add bluetooth default
 ```
 
 ## mkinicpio.conf & GRUB
