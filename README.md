@@ -408,6 +408,102 @@ mount /dev/<TARGET_DISK>p1 /mnt/boot/efi
 
 ---
 
+## Encrypt Second Drive
+
+A separate encrypted /data drive is straightforward, and you don’t need LVM here unless you want snapshots across disks. This WILL ERASE /dev/sda. Double-check the disk:
+
+```bash
+lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
+
+# If /dev/sda is empty or you want it clean:
+parted -s /dev/sda mklabel gpt
+parted -s -a optimal /dev/sda mkpart "LUKS2" 1MiB 100%
+
+# Expected Output:
+# lsblk
+# NAME           MAJ:MIN RM   SIZE RO TYPE  MOUNTPOINTS
+# sda              8:0    0 931,5G  0 disk  
+# └─sda1           8:1    0 931,5G  0 part
+
+cryptsetup luksFormat --type luks2 \
+    --cipher aes-xts-plain64 --key-size 512 \
+    --hash sha512 --iter-time 10000 \
+    --use-random /dev/sda1
+
+cryptsetup luksOpen /dev/sda1 data
+mkfs.btrfs -L data /dev/mapper/data
+mkdir -p /data
+mount /dev/mapper/data /mnt
+btrfs subvolume create /mnt/@data
+btrfs subvolume create /mnt/@snapshots
+
+# Normale workflow to decrypt:
+cryptsetup luksOpen /dev/sda1 data
+mount -o subvol=@data,compress=zstd,noatime /dev/mapper/data /data
+# When Done:
+umount /data
+cryptsetup luksClose data
+
+# Or Add:
+alias data-open='cryptsetup luksOpen /dev/sda1 data && sudo mount -o subvol=@data,compress=zstd,noatime /dev/mapper/data /data'
+alias data-close='umount /data && sudo cryptsetup luksClose data'
+```
+
+---
+
+## External Drive
+### Mount External Drive
+```bash
+# lsblk
+# NAME           MAJ:MIN RM   SIZE RO TYPE  MOUNTPOINTS
+# sda              8:0    0 931,5G  0 disk  
+# └─sda1           8:1    0 931,5G  0 part  
+#   └─data       254:3    0 931,5G  0 crypt /data
+# sdb              8:16   0 931,5G  0 disk  
+# └─sdb1           8:17   0    16M  0 part  
+# sdc              8:32   0   3,6T  0 disk  
+# ├─sdc1           8:33   0   128M  0 part  
+# └─sdc2           8:34   0   3,6T  0 part  
+
+# Check the file system of target sdc2:
+blkid /dev/sdc2
+# Example Output
+# /dev/sdc2: LABEL="Seagate" BLOCK_SIZE="512" UUID="32A85E" TYPE="ntfs" PARTLABEL="Basic" PARTUUID="b542e8-tc2"
+
+mkdir -p /mnt/external
+
+# NTFS:
+mount -t ntfs-3g /dev/sdc2 /mnt/external
+
+# exFAT
+mount -t exfat /dev/sdc2 /mnt/external
+
+# FAT32
+mount -t vfat /dev/sdc2 /mnt/external
+
+# ext4/XFS/F2FS:
+mount /dev/sdX2 /mnt/external
+
+# Btrfs:
+mount -t btrfs /dev/sdX2 /mnt/external
+# Or Convenience/performance:
+mount -o compress=zstd,noatime /dev/sdX2 /mnt/external
+# Or mount a subvolume if it exists:
+# btrfs subvolume list /dev/sdX2
+# ID 256 gen 123 top level 5 path @
+# ID 257 gen 124 top level 5 path @home
+# ID 258 gen 125 top level 5 path @snapshots
+mount -t btrfs -o subvol=@data /dev/sdX2 /mnt/external
+
+# Acces Files
+ls -la /mnt/external
+
+# Unmount safely
+umount /mnt/external
+```
+
+---
+
 # Install Base System
 Use basestrap to install the base and optionally the base-devel package groups and your preferred init. [Ref](https://wiki.artixlinux.org/Main/Installation)
 
@@ -435,7 +531,7 @@ basestrap /mnt \
     iwd iwd-openrc \           # Wi-Fi daemon
     dhcpcd dhcpcd-openrc \     # DHCP client (IP configuration)
     elogind-openrc \           # Login/session manager (systemd-logind replacement)
-	zsh
+	zsh                        # ZSH Shell
 
 # Generate /etc/fstab for the new system using UUIDs.
 # This records how partitions and volumes should be mounted at boot.
@@ -635,6 +731,7 @@ pacman -S \
     bluez bluez-utils bluez-openrc  # Bluetooth
     yt-dlp                 			# Video downloader
     mpd mpc mpv            			# Music player daemon + clients
+    nsxiv                           # Minimalist Image Viewer
 
     # --- Filesystem utilities ---
 	ntfs-3g
@@ -654,6 +751,10 @@ pacman -S \
     bat ripgrep fd fzf     			# Modern CLI tools (cat with syntax, search, find, fuzzy finder)
     lazygit github-cli git     		# Git helper tools
 	htop
+    parted
+    btrfs-progs
+    mlocate
+    autorandr
 
     # --- Fonts ---
     noto-fonts                  	# Google Noto fonts (multilingual support)
@@ -950,10 +1051,37 @@ exit
 
 ip addr show <device>
 
-mandb
+nvim /etc/init.d/unblockbluetooth
+#!/sbin/openrc-run
+command="/usr/sbin/rfkill"
+command_args="unblock bluetooth"
+depend() {
+        after bootmisc
+}
 
-pacman -S mlocate autorandr
+chmod +x /etc/init.d/unblockbluetooth
+rc-update add unblockbluetooth boot
+
+bluetoothctl
+	power on
+	agent on
+	default-agent
+	scan on
+	pair XX:XX:XX:XX:XX:XX
+	trust XX..
+	connect XX..
+	scan off
+
+mandb
 updatedb
+
+# Invert Mouse
+xinput list
+# Example Output:
+# ⎜   ↳ Logitech USB Optical Mouse           id=10   [slave  pointer  (2)]
+
+# Add following to .xinitrc before exec dwm:
+xinput set-button-map "Logitech USB Optical Mouse" 3 2 1 &
 ```
 
 ## Rechroot
@@ -979,47 +1107,6 @@ mount --rbind /sys /mnt/sys
 mount --rbind /dev /mnt/dev
 mount --rbind /run /mnt/run
 artix-chroot /mnt /bin/bash
-```
-
-## Bluetooth
-```bash
-rfkill list
-rfkill unblock bluetooth
-
-nvim /etc/init.d/bluetooth
-#!/sbin/openrc-run
-description="Bluetooth daemon"
-
-depend() {
-    need dbus
-}
-
-command="/usr/lib/bluetooth/bluetoothd"
-command_args="-n"
-command_background="yes"
-pidfile="/run/bluetoothd.pid"
-
-start_pre() {
-    checkpath --directory --mode 0755 /run
-
-    if rfkill list bluetooth >/dev/null 2>&1; then
-        rfkill unblock bluetooth
-    fi
-}
-
-chmod +x /etc/init.d/bluetooth
-sudo rc-update add bluetooth default
-sudo rc-service bluetooth start
-
-bluetoothctl
-	power on
-	agent on
-	default-agent
-	scan on
-	pair XX:XX:XX:XX:XX:XX
-	trust XX..
-	connect XX..
-	scan off
 ```
 
 ---

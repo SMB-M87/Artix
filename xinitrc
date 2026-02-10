@@ -53,12 +53,15 @@ xcompmgr &
 sleep 1 &
 xwallpaper --zoom /usr/local/share/wallpaper.jpg &
 
+autorandr -c
+
 while true; do
         DATE=$(date '+%a %b %d %H:%M:%S')
         BAT=$(cat /sys/class/power_supply/BAT0/capacity)
-        LOAD=$(uptime | sed 's/.*,//')
-        xsetroot -name "$DATE | $BAT | $LOAD"
+        xsetroot -name "$DATE | $BAT"
         sleep 1
 done &
+
+xinput set-button-map "Logitech USB Optical Mouse" 3 2 1 &
 
 exec dwm
