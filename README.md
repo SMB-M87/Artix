@@ -445,8 +445,8 @@ umount /data
 cryptsetup luksClose data
 
 # Or Add:
-alias data-open='cryptsetup luksOpen /dev/sda1 data && sudo mount -o subvol=@data,compress=zstd,noatime /dev/mapper/data /data'
-alias data-close='umount /data && sudo cryptsetup luksClose data'
+alias data-open='cryptsetup luksOpen /dev/sda1 data && mount -o subvol=@data,compress=zstd,noatime /dev/mapper/data /data'
+alias data-close='umount /data && cryptsetup luksClose data'
 ```
 
 ---
@@ -762,6 +762,10 @@ pacman -S \
     ttf-font-awesome            	# Icon font
     ttf-dejavu                  	# Classic sans-serif font
     terminus-font              		# Console font
+
+    zathura
+    zathura-pdf-mupdf
+    libreoffice-fresh
 
 # --- Step 4: Console font configuration ---
 # Changes the font in virtual console (tty) to Terminus 12x6 (good readability)

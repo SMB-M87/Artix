@@ -2,5 +2,5 @@ if [ -f /etc/zsh/zsh_shared ]; then
 	source /etc/zsh/zsh_shared
 fi
 
-alias data-open='cryptsetup luksOpen /dev/sda1 data && sudo mount -o subvol=@data,compress=zstd,noatime /dev/mapper/data /data'
-alias data-close='umount /data && sudo cryptsetup luksClose data'
+alias data-open='cryptsetup luksOpen /dev/sda1 data && mount -o subvol=@data,compress=zstd,noatime /dev/mapper/data /data'
+alias data-close='umount /data && cryptsetup luksClose data'
