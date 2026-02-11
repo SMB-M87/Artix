@@ -502,6 +502,30 @@ ls -la /mnt/external
 umount /mnt/external
 ```
 
+### Windows Compatible Drive
+```bash
+parted /dev/sdc
+(parted) mklabel gpt
+(parted) mkpart primary 1MiB 129MiB
+(parted) set 1 msftres on
+(parted) mkpart primary ntfs 129MiB 1057GiB
+(parted) mkpart primary 1057GiB 100%   
+(parted) quit   
+
+mkfs.ntfs -f -L Windows /dev/sdc2
+
+cryptsetup luksFormat --type luks2 \
+    --cipher aes-xts-plain64 --key-size 512 \
+    --hash sha512 --iter-time 10000 \
+    --use-random /dev/sdc3
+
+cryptsetup luksOpen /dev/sdc3 drive
+
+mkfs.btrfs -L drive /dev/mapper/drive
+
+mount /dev/mapper/drive /mnt/drive
+```
+
 ---
 
 # Install Base System
