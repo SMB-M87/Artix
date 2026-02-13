@@ -814,7 +814,7 @@ git remote set-url origin git@github.com:username/repo
 
 # --- Step 6: Install Oh My Posh for Zsh prompt ---
 # This provides a modern, informative prompt
-curl -s https://ohmyposh.dev/install.sh | bash -s -- -d /etc/zsh
+curl -s https://ohmyposh.dev/install.sh | bash -s -- -d /usr/local/bin/oh-my-posh
 mkdir -p /etc/zsh/themes
 git clone --depth=1 git@github.com:JanDeDobbeleer/oh-my-posh.git
 cp -r /tmp/oh-my-posh/themes/* /etc/zsh/themes/
