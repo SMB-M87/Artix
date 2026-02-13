@@ -1011,7 +1011,6 @@ nvim /etc/default/grub
 	GRUB_SAVEDEFAULT=true
 	GRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=UUID=xxx:system root=/dev/mapper/lvm-root loglevel=3 quiet nvidia-drm.modeset=1"
 	GRUB_CMDLINE_LINUX="cryptdevice=UUID=xxx:system root=/dev/mapper/lvm-root loglevel=3 quiet net.ifnames=0"
-	GRUB_ENABLE_CRYPTODISK=y
 
 # Verify UEFI is visible:
 ls /sys/firmware/efi/efivars
