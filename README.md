@@ -794,6 +794,7 @@ pacman -S \
     sdl2
     clang
     cmake
+    glad
 
 # --- Step 4: Console font configuration ---
 # Changes the font in virtual console (tty) to Terminus 12x6 (good readability)
