@@ -790,6 +790,10 @@ pacman -S \
     zathura
     zathura-pdf-mupdf
     libreoffice-fresh
+    glm
+    sdl2
+    clang
+
 
 # --- Step 4: Console font configuration ---
 # Changes the font in virtual console (tty) to Terminus 12x6 (good readability)
