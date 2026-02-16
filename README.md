@@ -1005,13 +1005,21 @@ nvim /etc/mkinitcpio.d/linux-lts.preset:
 mkinitcpio -p linux-hardened
 mkinitcpio -p linux-lts
 
+cp /usr/share/local/wallpaper.jpg /boot/grub/wallpaper.jpg
+
 # Configure GRUB for UEFI
 nvim /etc/default/grub
-	GRUB_TIMEOUT=1
-	GRUB_SAVEDEFAULT=true
+	GRUB_TIMEOUT=5
+	GRUB_SAVEDEFAULT=saved
 	GRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=UUID=xxx:system root=/dev/mapper/lvm-root loglevel=3 quiet nvidia-drm.modeset=1"
 	GRUB_CMDLINE_LINUX="cryptdevice=UUID=xxx:system root=/dev/mapper/lvm-root loglevel=3 quiet net.ifnames=0"
-
+    GRUB_ENABLE_CRYPTODISK=y
+    GRUB_GFXMODE=1920x1080
+    GRUB_TERMINAL_OUTPUT=gfxterm
+    GRUB_GFXPAYLOAD_LINUX=keep
+    GRUB_BACKGROUND="/boot/grub/wallpaper.jpg"
+    GRUB_SAVEDEFAULT=true
+    
 # Verify UEFI is visible:
 ls /sys/firmware/efi/efivars
 
@@ -1020,6 +1028,13 @@ grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=artix
 
 # Generate GRUB config
 grub-mkconfig -o /boot/grub/grub.cfg
+
+grep menuentry /boot/grub/grub.cfg
+grub-editenv /boot/grub/grubenv create
+grub-set-default "Artix Linux, with Linux linux-hardened"
+grub-editenv list
+# Expected Output
+# saved_entry=Artix Linux, with Linux linux-hardened
 ```
 
 ---
