@@ -793,7 +793,7 @@ pacman -S \
     glm
     sdl2
     clang
-
+    cmake
 
 # --- Step 4: Console font configuration ---
 # Changes the font in virtual console (tty) to Terminus 12x6 (good readability)
@@ -1128,6 +1128,15 @@ xinput list
 
 # Add following to .xinitrc before exec dwm:
 xinput set-button-map "Logitech USB Optical Mouse" 3 2 1 &
+
+gh auth login
+mkdir <Repo>
+git init
+touch README.md
+touch .gitignore
+git add .
+git commit -m "Initial commit"
+gh repo create <Repo> --public --source=. --remote=origin --push
 ```
 
 ## Rechroot
