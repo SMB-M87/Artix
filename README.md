@@ -819,6 +819,7 @@ pacman -S \
     cmake
     glad
     android-file-transfer
+    gnupg
 
 # --- Step 4: Console font configuration ---
 # Changes the font in virtual console (tty) to Terminus 12x6 (good readability)
@@ -1172,6 +1173,14 @@ aft-mtp-cli
 # Unmounting
 fusermount -u /mnt/external
 mount | grep /mnt/external
+
+# Encrypt files with GPG
+gpg --symmetric --cipher-algo AES256 file_to_encrypt.txt
+
+# Decrypt GPG files
+gpg --decrypt file.txt.gpg
+# OR
+gpg --decrypt file.txt.gpg > decrypted.txt
 ```
 
 ## Rechroot
