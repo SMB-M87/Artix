@@ -526,6 +526,29 @@ mkfs.btrfs -L drive /dev/mapper/drive
 mount /dev/mapper/drive /mnt/drive
 ```
 
+### Flash a USB:
+```bash
+lsblk
+# Example Output
+# sdb              8:16   1  14,5G  0 disk  
+# ├─sdb1           8:17   1  14,5G  0 part  
+# └─sdb2           8:18   1    32M  0 part
+
+parted /dev/sdb
+(parted) mrm 1
+(parted) mrm 2
+(parted) mmklabel gpt
+# Warning: The existing disk label on /dev/sdb will be destroyed and all data on this
+# disk will be lost. Do you want to continue?
+# Yes/No? Yes
+(parted) mkpart primary fat32 0% 100%                                     
+(parted) set 1 boot on                                                    
+(parted) quit  
+mkfs.vfat -F 32 /dev/sdb1
+mount /dev/sdb1 /mnt/drive 
+dd if=/data/ISO/<Target>.iso of=/dev/sdb bs=4M status=progress oflag=sync
+```
+
 ---
 
 # Install Base System
@@ -795,6 +818,7 @@ pacman -S \
     clang
     cmake
     glad
+    android-file-transfer
 
 # --- Step 4: Console font configuration ---
 # Changes the font in virtual console (tty) to Terminus 12x6 (good readability)
@@ -1130,6 +1154,7 @@ xinput list
 # Add following to .xinitrc before exec dwm:
 xinput set-button-map "Logitech USB Optical Mouse" 3 2 1 &
 
+# Setup GitHub Authentication
 gh auth login
 mkdir <Repo>
 git init
@@ -1138,6 +1163,15 @@ touch .gitignore
 git add .
 git commit -m "Initial commit"
 gh repo create <Repo> --public --source=. --remote=origin --push
+
+# Setup Android Support
+# https://wiki.archlinux.org/title/Media_Transfer_Protocol
+aft-mtp-mount /mnt/external
+# If you want to interact with it via the command line interface:
+aft-mtp-cli
+# Unmounting
+aft-mtp-umount /mnt/external
+mount | grep /mnt/external
 ```
 
 ## Rechroot
