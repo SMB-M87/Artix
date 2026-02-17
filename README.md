@@ -1170,7 +1170,7 @@ aft-mtp-mount /mnt/external
 # If you want to interact with it via the command line interface:
 aft-mtp-cli
 # Unmounting
-aft-mtp-umount /mnt/external
+fusermount -u /mnt/external
 mount | grep /mnt/external
 ```
 
