@@ -1148,9 +1148,16 @@ mandb
 updatedb
 
 # Invert Mouse
-xinput list
-# Example Output:
-# ⎜   ↳ Logitech USB Optical Mouse           id=10   [slave  pointer  (2)]
+mkdir -p /etc/X11/xorg.conf.d
+nvim /etc/X11/xorg.conf.d/40-mouse-left-handed.conf
+
+Section "InputClass"
+    Identifier "Left-handed physical mouse"
+    MatchIsPointer "on"
+    MatchIsTouchpad "off"
+    Driver "libinput"
+    Option "LeftHanded" "true"
+EndSection
 
 # Add following to .xinitrc before exec dwm:
 xinput set-button-map "Logitech USB Optical Mouse" 3 2 1 &

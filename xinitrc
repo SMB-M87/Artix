@@ -62,13 +62,4 @@ while true; do
         sleep 1
 done &
 
-while ! xinput list --short | grep -q "slave\s\+pointer"; do 
-	sleep 0.5;
-done; 
-
-xinput list --short | grep -E "slave\s+pointer" | while read -r l; do 
-	id=$(echo "$l" | sed -n 's/.*id=\([0-9]\+\).*/\1/p');
-	xinput set-button-map "$id" 3 2 1; 
-done;
-
 exec dwm
