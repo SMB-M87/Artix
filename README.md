@@ -1188,6 +1188,30 @@ gpg --symmetric --cipher-algo AES256 file_to_encrypt.txt
 gpg --decrypt file.txt.gpg
 # OR
 gpg --decrypt file.txt.gpg > decrypted.txt
+
+# Encrypt file
+dd if=/dev/zero of=<secret_container> bs=1M count=1000
+
+cryptsetup luksFormat --type luks2 \
+    --cipher aes-xts-plain64 \
+    --key-size 512 \
+    --hash sha512 \
+    --iter-time 10000 \
+    --use-random secret_container
+
+ls /dev/loop*
+modprobe loop
+losetup -fP secret_container
+losetup -a
+
+cryptsetup open /dev/loop0 secret
+mkfs.ext4 /dev/mapper/secret
+
+mount /dev/mapper/secret /mnt/drive
+
+umount -R /mnt/drive
+cryptsetup close secret
+losetup -d /dev/loop0
 ```
 
 ## Rechroot
