@@ -821,6 +821,14 @@ pacman -S \
     android-file-transfer
     gnupg
 
+    # Latex
+    texlive-basic
+    texlive-latex
+    texlive-latexextra
+    texlive-fontsextra
+    texlive-bibtexextra
+    texlive-langenglish    
+
 # --- Step 4: Console font configuration ---
 # Changes the font in virtual console (tty) to Terminus 12x6 (good readability)
 echo 'FONT=ter-132n' > /etc/vconsole.conf
@@ -1199,6 +1207,7 @@ cryptsetup luksFormat --type luks2 \
     --iter-time 10000 \
     --use-random secret_container
 
+mknod /dev/loop0 b 7 0
 ls /dev/loop*
 modprobe loop
 losetup -fP secret_container
@@ -1212,6 +1221,18 @@ mount /dev/mapper/secret /mnt/drive
 umount -R /mnt/drive
 cryptsetup close secret
 losetup -d /dev/loop0
+
+# LaTex
+nvim test.tex
+    \documentclass{article}
+
+    \begin{document}
+
+    Hello CV world.
+
+    \end{document}
+
+pdflatex test.tex
 ```
 
 ## Rechroot
