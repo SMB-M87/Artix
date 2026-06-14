@@ -1233,6 +1233,23 @@ nvim test.tex
     \end{document}
 
 pdflatex test.tex
+
+# Clam AV
+pacman -S clamav
+
+# Search for peculiar files
+find /mnt/drive -type f | sed 's/.*\.//' | tr '[:upper:]' '[:lower:]' | sort | uniq -c
+find /mnt/drive -type f | sed 's/.*\.//' | sort | uniq -c | sort -n
+find /mnt/drive -type f | less
+find /mnt/drive -type f -executable
+find /mnt/drive \( -iname "*.exe" -o -iname "*.bat" -o -iname "*.scr" -o -iname "*.msi" \)
+
+# Scan
+freshclam
+clamscan -r /mnt/drive
+||
+clamscan -r --bell --infected /mnt/drive
+
 ```
 
 ## Rechroot
