@@ -1235,7 +1235,7 @@ nvim test.tex
 pdflatex test.tex
 
 # Clam AV
-pacman -S clamav
+pacman -S clamav lsof strace usbutils
 
 # Search for peculiar files
 find /mnt/drive -type f | sed 's/.*\.//' | tr '[:upper:]' '[:lower:]' | sort | uniq -c
@@ -1250,6 +1250,8 @@ clamscan -r /mnt/drive
 ||
 clamscan -r --bell --infected /mnt/drive
 
+lsof -p $(pidof clamscan) | tail
+strace -p $(pidof clamscan) -e openat
 ```
 
 ## Rechroot
