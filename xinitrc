@@ -49,12 +49,22 @@ if [ -d "$xinitdir"/xinitrc.d ] ; then
         unset f
 fi
 
+# Start compositor for basic X11 window compositing,
+# supporting effects such as transparency and the prevention of visual tearing
 xcompmgr &
+
+# Small delay to give the compositor time to initialize
 sleep 1 &
+
+# Set the desktop wallpaper
+# --zoom scales/crops the image to fill the screen
 xwallpaper --zoom /usr/local/share/wallpaper.jpg &
 
+# Automatically detect and apply the appropriate monitor configuration
+# Usefull when switching between different displays/docking stations
 autorandr -c
 
+# Continuously update the dwm status bar
 while true; do
         DATE=$(date '+%a %b %d %H:%M:%S')
         BAT=$(cat /sys/class/power_supply/BAT0/capacity)
@@ -62,4 +72,5 @@ while true; do
         sleep 1
 done &
 
+# Start the dwm windows manager
 exec dwm
